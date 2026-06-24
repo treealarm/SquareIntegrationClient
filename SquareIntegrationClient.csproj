@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapr.Client" Version="1.16.0" />
+    <PackageReference Include="Google.Protobuf" Version="3.34.1" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.76.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.80.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Square wire protocol, vendored from Square/Protos — this project is the single source of
+         truth shared with Square via the SquareIntegrationClient submodule (see
+         docs/square-integration-plan.md). GrpcServices=Both is required because a producer is
+         both a gRPC client (pushing into Square's IntegroService/TreeAlarmsGrpcService) and a gRPC
+         server (hosting ActionsService for incoming commands from Square). -->
+    <Protobuf Include="Protos\tracks.proto" GrpcServices="Both" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\integro.proto" GrpcServices="Both" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\actions.proto" GrpcServices="Both" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\common.proto" GrpcServices="None" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\diagrams.proto" GrpcServices="None" ProtoRoot="Protos" />
+  </ItemGroup>
+
+</Project>

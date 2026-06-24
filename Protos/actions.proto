@@ -1,0 +1,90 @@
+﻿syntax = "proto3";
+
+import "google/protobuf/wrappers.proto";
+import "common.proto";
+package object_actions;
+
+message ProtoCredential {
+  string username = 1;
+  string password = 2;
+}
+
+
+message ProtoIpRange {
+  string start_ip = 1; // напр. "192.168.1.1"
+  string end_ip = 2;   // напр. "192.168.1.255"
+}
+
+message ProtoCredentialList {
+  repeated ProtoCredential values = 1;
+}
+message ProtoEnumList {
+  repeated string values = 1;
+}
+
+message ProtoMap {
+  map<string, string> values = 1;
+}
+// Тип значения параметра (oneof для поддержки различных типов значений)
+message ProtoActionValue {
+  oneof value {
+    double double_value = 1;
+    int32 int_value = 2;
+    string string_value = 3;
+    common.ProtoGeometry coordinates = 4; // Список координат lat, lon
+    ProtoIpRange ip_range = 5;
+    ProtoCredentialList credential_list = 6;
+    ProtoEnumList enum_list = 7;
+    ProtoMap map = 8;
+  }
+}
+
+// Сообщение, описывающее параметры действия
+message ProtoActionParameter {
+  string name = 1;         // Имя параметра
+  ProtoActionValue cur_val = 2;
+}
+
+
+message ProtoActionDescription {
+  string name = 1;                     // уникальное имя действия
+  repeated ProtoActionParameter parameters = 2; // Список параметров для действия
+}
+
+message ProtoActionExe {
+  string object_id = 1; // ID объекта,
+  string name = 2;                     // уникальное имя действия
+  repeated ProtoActionParameter parameters = 3; // Параметры действия
+  string uid = 4;
+}
+
+// Запрос для вызова действия
+message ProtoExecuteActionRequest {
+  repeated ProtoActionExe actions = 1;               // Действия выполнять по порядку
+}
+
+// Ответ после выполнения действия
+message ProtoExecuteActionResponse {
+  bool success = 1;  // Успешность выполнения действия
+  string message = 2; // Сообщение о результате выполнения
+  bytes data = 3;
+  string mime_type = 4;
+}
+
+// Запрос для получения доступных действий
+message ProtoGetAvailableActionsRequest {
+  string object_id = 1; // ID объекта, для которого нужно получить список действий
+}
+
+// Ответ с доступными действиями
+message ProtoGetAvailableActionsResponse {
+  repeated ProtoActionDescription actions_descr = 1; // Список доступных действий
+}
+
+// Сервис для работы с действиями
+service ActionsService {
+  rpc GetAvailableActions (ProtoGetAvailableActionsRequest) returns (ProtoGetAvailableActionsResponse);
+  rpc ExecuteActions (ProtoExecuteActionRequest) returns (ProtoExecuteActionResponse);
+  rpc CancelActions (ProtoEnumList) returns (google.protobuf.BoolValue);
+  rpc ExecuteActionGetResult (ProtoActionExe) returns (ProtoExecuteActionResponse);
+}

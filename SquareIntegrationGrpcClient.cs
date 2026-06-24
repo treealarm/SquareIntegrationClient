@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Dapr.Client;
 using LeafletAlarmsGrpc;
 
@@ -9,8 +10,14 @@ public class SquareIntegrationGrpcClient : ISquareIntegration
 {
   private readonly TreeAlarmsGrpcService.TreeAlarmsGrpcServiceClient _tracksClient;
   private readonly IntegroService.IntegroServiceClient _integroClient;
-  private readonly Dictionary<string, string> _objectIdCache = new();
-  private readonly object _cacheLock = new();
+
+  // Lazy<Task<T>> (not a plain Dictionary<string,string>+lock) so concurrent callers requesting the
+  // same key share one in-flight RPC instead of racing — a lock around "check cache, await RPC,
+  // write cache" can't make the await itself atomic, so two callers for the same key could
+  // otherwise both miss the cache and both call GenerateObjectIdAsync. ConcurrentDictionary.GetOrAdd
+  // guarantees only one Lazy is published per key, and Lazy<T>'s default thread-safety mode runs
+  // the factory exactly once even if multiple threads call .Value concurrently.
+  private readonly ConcurrentDictionary<string, Lazy<Task<string?>>> _objectIdCache = new();
 
   public bool Enabled => true;
 
@@ -28,29 +35,35 @@ public class SquareIntegrationGrpcClient : ISquareIntegration
   public async Task<string?> GenerateObjectId(string prefix, long number)
   {
     var key = $"{prefix}_{number}";
-    lock (_cacheLock)
-    {
-      if (_objectIdCache.TryGetValue(key, out var cached))
-      {
-        return cached;
-      }
-    }
+    var lazy = _objectIdCache.GetOrAdd(key, k => new Lazy<Task<string?>>(() => FetchObjectIdAsync(k)));
 
+    try
+    {
+      var objectId = await lazy.Value;
+      if (string.IsNullOrEmpty(objectId))
+      {
+        // Don't poison the cache forever with a failed/empty lookup — let the next caller retry.
+        _objectIdCache.TryRemove(key, out _);
+      }
+      return objectId;
+    }
+    catch
+    {
+      // Lazy<T>'s default thread-safety mode caches a thrown exception on the Lazy instance
+      // forever — remove it from the dictionary so the next call gets a fresh Lazy (and a fresh
+      // attempt) instead of replaying the same exception indefinitely.
+      _objectIdCache.TryRemove(key, out _);
+      throw;
+    }
+  }
+
+  private async Task<string?> FetchObjectIdAsync(string key)
+  {
     var request = new GenerateObjectIdRequest();
     request.Input.Add(new GenerateObjectIdData { Input = key, Version = "1.0" });
 
     var result = await _integroClient.GenerateObjectIdAsync(request);
-    var objectId = result?.Output.FirstOrDefault()?.ObjectId;
-
-    if (!string.IsNullOrEmpty(objectId))
-    {
-      lock (_cacheLock)
-      {
-        _objectIdCache[key] = objectId;
-      }
-    }
-
-    return objectId;
+    return result?.Output.FirstOrDefault()?.ObjectId;
   }
 
   // --- Write ---
@@ -131,11 +144,23 @@ public class SquareIntegrationGrpcClient : ISquareIntegration
     return response?.Objects.ToList();
   }
 
+  // Callers (IntegrationSync.InitMainObject, IntegrationSyncFull.InitAll) loop on "null means not
+  // found yet, keep retrying" — they are not equipped to handle a thrown exception from a
+  // transient RPC/Dapr-sidecar hiccup, so one is converted into the "retry" signal they expect
+  // instead of propagating and crashing whatever hosted service called them.
   public async Task<List<IntegroProto>?> GetIntegroByType(string type)
   {
-    var request = new GetListByTypeRequest { IName = AppId, IType = type };
-    var response = await _integroClient.GetListByTypeAsync(request);
-    return response?.Objects.ToList();
+    try
+    {
+      var request = new GetListByTypeRequest { IName = AppId, IType = type };
+      var response = await _integroClient.GetListByTypeAsync(request);
+      return response?.Objects.ToList();
+    }
+    catch (Exception ex)
+    {
+      Console.Error.WriteLine($"GetIntegroByType('{type}') failed: {ex}");
+      return null;
+    }
   }
 
   public async Task<List<IntegroProto>?> GetIntegroByIds(IEnumerable<string> ids)
